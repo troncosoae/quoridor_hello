@@ -1,7 +1,9 @@
-from collections import deque
 from enum import Enum
+from typing import Protocol
 
-from board import QuoridorBoard
+from quoridor import pathfinding
+from quoridor.board import BoardState, QuoridorBoard
+from quoridor.timeouts import run_with_timeout
 
 
 class Direction(Enum):
@@ -28,10 +30,47 @@ class InvalidMoveError(Exception):
     pass
 
 
+class EngineLike(Protocol):
+    """The interface Agent/GameRunner/Renderer code is written against.
+
+    QuoridorEngine (local, in-process) and RemoteEngine (quoridor.client,
+    talks to a quoridor.server over HTTP) both satisfy this structurally.
+    Code written against EngineLike must never reach past it (e.g. a local
+    QuoridorEngine's `.board` attribute) — RemoteEngine has no such
+    attribute, so anything that does breaks remote play silently.
+    """
+
+    current_player: int
+
+    def get_state(self) -> BoardState: ...
+
+    def is_valid_move(self, player: int, direction: Direction) -> bool: ...
+
+    def move(self, player: int, direction: Direction) -> None: ...
+
+    def is_valid_wall_placement(
+        self, player: int, orientation: WallOrientation, row: int, col: int
+    ) -> bool: ...
+
+    def place_wall(
+        self, player: int, orientation: WallOrientation, row: int, col: int
+    ) -> None: ...
+
+    def winner(self) -> int | None: ...
+
+
 class QuoridorEngine:
+    # Only wall placement runs open-ended search (a connected-components scan
+    # to check neither player gets fully boxed in); plain moves are O(1) and
+    # don't need a budget. Defensive — see TimeoutExceededError's docstring.
+    WALL_CHECK_TIMEOUT_SECONDS = 3.0
+
     def __init__(self, board: QuoridorBoard | None = None):
         self.board = board if board is not None else QuoridorBoard()
         self.current_player: int = 1
+
+    def get_state(self) -> BoardState:
+        return self.board.get_state()
 
     def _pawn_pos(self, player: int) -> list[int]:
         return self.board.p1_pos if player == 1 else self.board.p2_pos
@@ -40,15 +79,9 @@ class QuoridorEngine:
         return self.board.p2_pos if player == 1 else self.board.p1_pos
 
     def _is_wall_between(self, row: int, col: int, new_row: int, new_col: int) -> bool:
-        if new_row == row + 1:  # moving down
-            return (row, col) in self.board.h_walls or (row, col - 1) in self.board.h_walls
-        if new_row == row - 1:  # moving up
-            return (new_row, col) in self.board.h_walls or (new_row, col - 1) in self.board.h_walls
-        if new_col == col + 1:  # moving right
-            return (row, col) in self.board.v_walls or (row - 1, col) in self.board.v_walls
-        if new_col == col - 1:  # moving left
-            return (row, new_col) in self.board.v_walls or (row - 1, new_col) in self.board.v_walls
-        return False
+        return pathfinding.is_wall_between(
+            self.board.h_walls, self.board.v_walls, row, col, new_row, new_col
+        )
 
     def is_valid_move(self, player: int, direction: Direction) -> bool:
         row, col = self._pawn_pos(player)
@@ -94,28 +127,20 @@ class QuoridorEngine:
             return self.board.h_walls
         return self.board.v_walls
 
-    def _has_path_to_goal(self, player: int) -> bool:
-        pawn_row, pawn_col = self._pawn_pos(player)
-        start: tuple[int, int] = (pawn_row, pawn_col)
-        goal_row = self.board.size - 1 if player == 1 else 0
+    def _walls_still_allow_both_players_a_path(self) -> bool:
+        def check() -> bool:
+            components = pathfinding.connected_components(
+                self.board.h_walls, self.board.v_walls, self.board.size
+            )
+            for player in (1, 2):
+                row, col = self._pawn_pos(player)
+                goal_row = self.board.size - 1 if player == 1 else 0
+                region = pathfinding.region_containing(components, (row, col))
+                if not any(r == goal_row for r, _ in region):
+                    return False
+            return True
 
-        visited = {start}
-        queue = deque([start])
-        while queue:
-            row, col = queue.popleft()
-            if row == goal_row:
-                return True
-            for d_row, d_col in _DIRECTION_DELTAS.values():
-                new_row, new_col = row + d_row, col + d_col
-                if not (0 <= new_row < self.board.size and 0 <= new_col < self.board.size):
-                    continue
-                if self._is_wall_between(row, col, new_row, new_col):
-                    continue
-                if (new_row, new_col) in visited:
-                    continue
-                visited.add((new_row, new_col))
-                queue.append((new_row, new_col))
-        return False
+        return run_with_timeout(check, self.WALL_CHECK_TIMEOUT_SECONDS)
 
     def is_valid_wall_placement(
         self, player: int, orientation: WallOrientation, row: int, col: int
@@ -139,12 +164,16 @@ class QuoridorEngine:
 
         wall_set = self._wall_set(orientation)
         wall_set.add((row, col))
-        both_have_path = self._has_path_to_goal(1) and self._has_path_to_goal(2)
-        wall_set.discard((row, col))
+        try:
+            return self._walls_still_allow_both_players_a_path()
+        finally:
+            # Guaranteed even if the check above times out — a tentative
+            # wall must never survive past this method either way.
+            wall_set.discard((row, col))
 
-        return both_have_path
-
-    def place_wall(self, player: int, orientation: WallOrientation, row: int, col: int) -> None:
+    def place_wall(
+        self, player: int, orientation: WallOrientation, row: int, col: int
+    ) -> None:
         if player != self.current_player:
             raise InvalidMoveError(f"It is player {self.current_player}'s turn")
 
@@ -167,32 +196,3 @@ class QuoridorEngine:
         if self.is_won(2):
             return 2
         return None
-
-
-if __name__ == "__main__":
-    from board import CLIRenderer
-
-    def try_place_wall(
-        engine: QuoridorEngine, player: int, orientation: WallOrientation, row: int, col: int
-    ) -> None:
-        try:
-            engine.place_wall(player, orientation, row, col)
-            print(f"\nPlayer {player} placed a {orientation.value} wall at ({row}, {col})")
-        except InvalidMoveError as e:
-            print(f"\nPlayer {player} wall placement rejected: {e}")
-        CLIRenderer.render(engine.board)
-
-    def try_move(engine: QuoridorEngine, player: int, direction: Direction) -> None:
-        try:
-            engine.move(player, direction)
-            print(f"\nPlayer {player} moved {direction.value}")
-        except InvalidMoveError as e:
-            print(f"\nPlayer {player} move {direction.value} rejected: {e}")
-        CLIRenderer.render(engine.board)
-
-    engine = QuoridorEngine(QuoridorBoard(5))
-    CLIRenderer.render(engine.board)
-
-    try_place_wall(engine, 1, WallOrientation.HORIZONTAL, 0, 1)
-    try_place_wall(engine, 2, WallOrientation.HORIZONTAL, 0, 1)  # rejected: overlap
-    try_move(engine, 2, Direction.LEFT)

@@ -1,7 +1,11 @@
+import time
+
 import pytest
 
-from board import QuoridorBoard
-from engine import Direction, InvalidMoveError, QuoridorEngine, WallOrientation
+from quoridor import pathfinding
+from quoridor.board import QuoridorBoard
+from quoridor.engine import Direction, InvalidMoveError, QuoridorEngine, WallOrientation
+from quoridor.timeouts import TimeoutExceededError
 
 
 def make_engine(size=5):
@@ -144,3 +148,20 @@ class TestWallPlacement:
         assert engine.board.p1_walls_left == 0
         with pytest.raises(InvalidMoveError):
             engine.place_wall(1, WallOrientation.HORIZONTAL, 3, 0)
+
+    def test_wall_check_timeout_does_not_leave_a_dangling_tentative_wall(self, monkeypatch):
+        engine = make_engine(5)
+        engine.WALL_CHECK_TIMEOUT_SECONDS = 0.01
+
+        def slow_connected_components(h_walls, v_walls, size):
+            time.sleep(0.2)
+            return pathfinding.connected_components(h_walls, v_walls, size)
+
+        monkeypatch.setattr(pathfinding, "connected_components", slow_connected_components)
+
+        with pytest.raises(TimeoutExceededError):
+            engine.place_wall(1, WallOrientation.HORIZONTAL, 0, 0)
+
+        assert engine.board.h_walls == set()
+        assert engine.board.p1_walls_left == 3
+        assert engine.current_player == 1

@@ -2,7 +2,7 @@
 python_version = "3.11"
 strict = true
 warn_unreachable = true
-files = ["board.py", "engine.py", "brain_v1.py", "tests"]
+files = ["quoridor", "tests"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

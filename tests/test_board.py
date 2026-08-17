@@ -1,6 +1,6 @@
 import pytest
 
-from board import QuoridorBoard, size_to_walls
+from quoridor.board import QuoridorBoard, size_to_walls
 
 
 class TestQuoridorBoard:
