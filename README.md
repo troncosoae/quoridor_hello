@@ -78,14 +78,14 @@ sequenceDiagram
     A->>S: GET /health
     S-->>A: 200 ok
     A->>S: POST /claim (no player = auto-assign)
-    Note over S: lock; assign next open seat
-    S-->>A: 200 {player: 1}
+    Note over S: lock, assign next open seat
+    S-->>A: 200 player 1
 
     B->>S: GET /health
     S-->>B: 200 ok
     B->>S: POST /claim (no player = auto-assign)
-    Note over S: lock; assign next open seat
-    S-->>B: 200 {player: 2}
+    Note over S: lock, assign next open seat
+    S-->>B: 200 player 2
 ```
 
 ### Sequence: one action, through to the next player acting
@@ -101,18 +101,18 @@ sequenceDiagram
     participant B as Client B (waiting)
 
     A->>S: GET /state
-    S-->>A: 200 {current_player: A}
+    S-->>A: 200 current_player is A
     Note over A: agent.choose_action()
     A->>S: POST /move
-    Note over S: lock; engine.move(); current_player -> B; unlock
-    S-->>A: 200 {current_player: B}
+    Note over S: lock, engine.move(), current_player -> B, unlock
+    S-->>A: 200 current_player is B
     Note over A: current_player != A, sleep(POLL_INTERVAL)
 
     B->>S: GET /state
-    S-->>B: 200 {current_player: B}
+    S-->>B: 200 current_player is B
     Note over B: sees it's their turn
     B->>S: POST /move (or /wall)
-    Note over S: lock; engine mutates...; unlock
+    Note over S: lock, engine mutates, unlock
 ```
 
 ## Rules implemented
