@@ -3,6 +3,9 @@ PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
 URL ?= http://localhost:8765
+SIZE ?= 9
+PLAYERS ?= 2
+PLAYER_ARG = $(if $(PLAYER),--player $(PLAYER),)
 
 .PHONY: help install test typecheck lint check \
 	run-local run-server run-client-human run-client-bfs \
@@ -17,10 +20,11 @@ help:
 	@echo "  make check             Run lint + typecheck + test (use before committing)"
 	@echo "  make run-local         Play a local game (human vs bfs by default)"
 	@echo "  make run-server        Start the Quoridor HTTP game server"
+	@echo "                         (defaults to SIZE=9 PLAYERS=2; override e.g. SIZE=5 PLAYERS=4)"
 	@echo "  make run-client-human  Connect a human player to a running server"
-	@echo "                         (defaults to PLAYER=1; override with PLAYER=2, URL=...)"
+	@echo "                         (seat auto-assigns; override with PLAYER=N, URL=...)"
 	@echo "  make run-client-bfs    Connect a BFS AI player to a running server"
-	@echo "                         (defaults to PLAYER=2; override with PLAYER=1, URL=...)"
+	@echo "                         (seat auto-assigns; override with PLAYER=N, URL=...)"
 	@echo "  make docker-build      Build the server/client Docker images"
 	@echo "  make docker-up         Start a 4-player server + 3 AI clients in Docker (seats"
 	@echo "                         auto-assign); attach as the human with"
@@ -51,13 +55,13 @@ run-local: install
 	$(PYTHON) -m quoridor.play_local --agents human bfs
 
 run-server: install
-	$(PYTHON) -m quoridor.server
+	$(PYTHON) -m quoridor.server --size $(SIZE) --players $(PLAYERS)
 
 run-client-human: install
-	$(PYTHON) -m quoridor.play_remote --url $(URL) --player $(if $(PLAYER),$(PLAYER),1) --agent human
+	$(PYTHON) -m quoridor.play_remote --url $(URL) $(PLAYER_ARG) --agent human
 
 run-client-bfs: install
-	$(PYTHON) -m quoridor.play_remote --url $(URL) --player $(if $(PLAYER),$(PLAYER),2) --agent bfs
+	$(PYTHON) -m quoridor.play_remote --url $(URL) $(PLAYER_ARG) --agent bfs
 
 docker-build:
 	docker compose build
