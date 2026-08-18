@@ -1,6 +1,6 @@
 import pytest
 
-from quoridor.agents import Agent, BFSAgent
+from quoridor.agents import Agent, FourPlayerBFSAgent, TwoPlayerBFSAgent
 from quoridor.client import RemoteEngine, SeatTakenError
 from quoridor.engine import Direction, InvalidMoveError
 from quoridor.runner import GameRunner
@@ -13,9 +13,9 @@ class TestRemoteGameplay:
 
         # Proves Agent/GameRunner code is unchanged whether the engine is
         # local or remote: this is the exact same GameRunner used against a
-        # local QuoridorEngine in test_runner.py, here driving two BFSAgents
-        # to a real winner purely through HTTP round-trips.
-        agents: dict[int, Agent] = {1: BFSAgent(1), 2: BFSAgent(2)}
+        # local QuoridorEngine in test_runner.py, here driving two BFS
+        # agents to a real winner purely through HTTP round-trips.
+        agents: dict[int, Agent] = {1: TwoPlayerBFSAgent(1), 2: TwoPlayerBFSAgent(2)}
         winner = GameRunner(remote, agents).run()
 
         assert winner in (1, 2)
@@ -32,7 +32,7 @@ class TestRemoteGameplay:
         base_url, _ = live_server_4p
         remote = RemoteEngine(base_url)
 
-        agents: dict[int, Agent] = {p: BFSAgent(p) for p in (1, 2, 3, 4)}
+        agents: dict[int, Agent] = {p: FourPlayerBFSAgent(p) for p in (1, 2, 3, 4)}
         winner = GameRunner(remote, agents).run()
 
         assert winner in (1, 2, 3, 4)

@@ -3,18 +3,11 @@ import sys
 import time
 
 from quoridor.actions import apply_action
-from quoridor.agents import Agent, BFSAgent, CLIAgent
+from quoridor.agents import build_agent
 from quoridor.client import RemoteEngine, SeatTakenError
 from quoridor.engine import InvalidMoveError
-from quoridor.rendering import CLIRenderer
 
 POLL_INTERVAL = 1.0
-
-
-def _build_agent(player: int, kind: str) -> Agent:
-    if kind == "human":
-        return CLIAgent(player, CLIRenderer())
-    return BFSAgent(player, CLIRenderer())
 
 
 def main() -> None:
@@ -35,7 +28,8 @@ def main() -> None:
         print(f"Could not connect as player {requested}: {e}")
         sys.exit(1)
 
-    agent = _build_agent(player, args.agent)
+    player_count = remote.get_state()["player_count"]
+    agent = build_agent(player, args.agent, player_count)
 
     print(f"Connected to {args.url} as player {player} ({args.agent}).")
 

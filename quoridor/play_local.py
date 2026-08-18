@@ -1,16 +1,10 @@
 import argparse
 
-from quoridor.agents import Agent, BFSAgent, CLIAgent
+from quoridor.agents import build_agent
 from quoridor.board import QuoridorBoard
 from quoridor.engine import QuoridorEngine
 from quoridor.rendering import CLIRenderer
 from quoridor.runner import GameRunner
-
-
-def _build_agent(player: int, kind: str) -> Agent:
-    if kind == "human":
-        return CLIAgent(player, CLIRenderer())
-    return BFSAgent(player, CLIRenderer())
 
 
 def main() -> None:
@@ -28,7 +22,7 @@ def main() -> None:
 
     engine = QuoridorEngine(QuoridorBoard(args.size, args.players))
     agents = {
-        player: _build_agent(player, kind)
+        player: build_agent(player, kind, args.players)
         for player, kind in enumerate(args.agents, start=1)
     }
 

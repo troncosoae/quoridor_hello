@@ -57,6 +57,42 @@ def bfs_shortest_path(
     return None
 
 
+def distance_field(
+    h_walls: set[tuple[int, int]],
+    v_walls: set[tuple[int, int]],
+    size: int,
+    goal_cells: frozenset[tuple[int, int]],
+) -> dict[tuple[int, int], int]:
+    """Multi-source BFS seeded from every goal cell at once: shortest
+    distance (in steps) from each reachable cell to the nearest goal cell,
+    respecting walls. Goal cells map to 0. A cell fully walled off from
+    every goal is simply absent from the returned mapping.
+
+    Unlike a single point-to-point search, one flood fill here answers the
+    distance for every cell on the board, not just one starting position —
+    e.g. every player's distance to their own goal can be read off the same
+    field instead of running a separate search per player.
+    """
+    distances: dict[tuple[int, int], int] = {cell: 0 for cell in goal_cells}
+    queue = deque(distances.keys())
+
+    while queue:
+        row, col = queue.popleft()
+        d = distances[(row, col)]
+        for d_row, d_col in _NEIGHBOR_DELTAS:
+            new_row, new_col = row + d_row, col + d_col
+            if not (0 <= new_row < size and 0 <= new_col < size):
+                continue
+            if (new_row, new_col) in distances:
+                continue
+            if is_wall_between(h_walls, v_walls, row, col, new_row, new_col):
+                continue
+            distances[(new_row, new_col)] = d + 1
+            queue.append((new_row, new_col))
+
+    return distances
+
+
 def connected_components(
     h_walls: set[tuple[int, int]], v_walls: set[tuple[int, int]], size: int
 ) -> list[set[tuple[int, int]]]:

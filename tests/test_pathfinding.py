@@ -3,6 +3,7 @@ import pytest
 from quoridor.pathfinding import (
     bfs_shortest_path,
     connected_components,
+    distance_field,
     is_wall_between,
     region_containing,
 )
@@ -117,3 +118,34 @@ class TestRegionContaining:
         components = connected_components(set(), set(), 5)
         with pytest.raises(ValueError, match=r"\(9, 9\)"):
             region_containing(components, (9, 9))
+
+
+class TestDistanceField:
+    def test_goal_cells_map_to_zero(self):
+        goal = _row_goal(4)
+        field = distance_field(set(), set(), 5, goal)
+        for cell in goal:
+            assert field[cell] == 0
+
+    def test_straight_line_distances_on_empty_board(self):
+        field = distance_field(set(), set(), 5, _row_goal(4))
+        assert field[(0, 2)] == 4
+        assert field[(3, 2)] == 1
+        assert field[(4, 2)] == 0
+
+    def test_wall_increases_the_routed_distance(self):
+        # Wall spans cols 0-1 directly below row 0, forcing (0,0) to detour
+        # right before it can head down (same setup as
+        # TestBfsShortestPath.test_path_routes_around_a_wall).
+        h_walls = {(0, 0)}
+        field_without_wall = distance_field(set(), set(), 5, _row_goal(4))
+        field_with_wall = distance_field(h_walls, set(), 5, _row_goal(4))
+        assert field_with_wall[(0, 0)] > field_without_wall[(0, 0)]
+
+    def test_unreachable_cell_is_absent(self):
+        # Same corner trap as
+        # TestConnectedComponents.test_boxed_in_corner_is_its_own_singleton_region.
+        h_walls = {(0, 0)}
+        v_walls = {(0, 0)}
+        field = distance_field(h_walls, v_walls, 5, _row_goal(4))
+        assert (0, 0) not in field
