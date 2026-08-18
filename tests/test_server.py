@@ -64,6 +64,16 @@ class TestValidEndpoints:
         assert status == 200
         assert body["valid"] is True
 
+    def test_valid_move_out_of_range_player_returns_400(self, live_server):
+        base_url, _ = live_server
+        status, _ = _get(f"{base_url}/valid-move?player=5&direction=down")
+        assert status == 400
+
+    def test_valid_wall_out_of_range_player_returns_400(self, live_server):
+        base_url, _ = live_server
+        status, _ = _get(f"{base_url}/valid-wall?player=5&orientation=horizontal&row=0&col=0")
+        assert status == 400
+
 
 class TestMoveEndpoint:
     def test_move_success_updates_state(self, live_server):
@@ -71,7 +81,7 @@ class TestMoveEndpoint:
         status, body = _post(f"{base_url}/move", {"player": 1, "direction": "down"})
         assert status == 200
         assert body["current_player"] == 2
-        assert engine.board.p1_pos == [1, 2]
+        assert engine.board.positions[0] == [1, 2]
 
     def test_move_out_of_turn_returns_409(self, live_server):
         base_url, _ = live_server
@@ -139,3 +149,37 @@ class TestClaimEndpoint:
         base_url, _ = live_server
         status, _ = _post(f"{base_url}/claim", {"player": 3})
         assert status == 400
+
+
+class TestAutoAssignClaim:
+    def test_sequential_claims_fill_seats_in_order(self, live_server_4p):
+        base_url, _ = live_server_4p
+        for expected_seat in (1, 2, 3, 4):
+            status, body = _post(f"{base_url}/claim", {})
+            assert status == 200
+            assert body == {"player": expected_seat}
+
+    def test_auto_assign_skips_a_seat_already_taken_explicitly(self, live_server_4p):
+        base_url, _ = live_server_4p
+        status, _ = _post(f"{base_url}/claim", {"player": 1})
+        assert status == 200
+
+        status, body = _post(f"{base_url}/claim", {})
+        assert status == 200
+        assert body == {"player": 2}
+
+    def test_auto_assign_returns_409_once_game_is_full(self, live_server_4p):
+        base_url, _ = live_server_4p
+        for _ in range(4):
+            status, _ = _post(f"{base_url}/claim", {})
+            assert status == 200
+
+        status, body = _post(f"{base_url}/claim", {})
+        assert status == 409
+        assert "error" in body
+
+    def test_explicit_claim_of_player_three_or_four_still_works(self, live_server_4p):
+        base_url, _ = live_server_4p
+        status, body = _post(f"{base_url}/claim", {"player": 4})
+        assert status == 200
+        assert body == {"player": 4}

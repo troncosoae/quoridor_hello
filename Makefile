@@ -22,7 +22,8 @@ help:
 	@echo "  make run-client-bfs    Connect a BFS AI player to a running server"
 	@echo "                         (defaults to PLAYER=2; override with PLAYER=1, URL=...)"
 	@echo "  make docker-build      Build the server/client Docker images"
-	@echo "  make docker-up         Start server + AI client in Docker; attach a human with"
+	@echo "  make docker-up         Start a 4-player server + 3 AI clients in Docker (seats"
+	@echo "                         auto-assign); attach as the human with"
 	@echo "                         'docker compose run --rm cli-client'"
 	@echo "  make docker-down       Stop and remove the Docker Compose stack"
 	@echo "  make clean             Remove venv and caches"
@@ -47,7 +48,7 @@ lint: install
 check: lint typecheck test
 
 run-local: install
-	$(PYTHON) -m quoridor.play_local --p1 human --p2 bfs
+	$(PYTHON) -m quoridor.play_local --agents human bfs
 
 run-server: install
 	$(PYTHON) -m quoridor.server
@@ -62,7 +63,7 @@ docker-build:
 	docker compose build
 
 docker-up:
-	docker compose up -d server ai-client
+	docker compose up -d server ai-client-1 ai-client-2 ai-client-3
 
 docker-down:
 	docker compose down

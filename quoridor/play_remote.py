@@ -20,23 +20,27 @@ def _build_agent(player: int, kind: str) -> Agent:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Connect to a running Quoridor server.")
     parser.add_argument("--url", required=True)
-    parser.add_argument("--player", type=int, choices=[1, 2], required=True)
+    parser.add_argument(
+        "--player", type=int, choices=[1, 2, 3, 4], default=None,
+        help="Seat to claim. Omit to auto-assign the next open seat.",
+    )
     parser.add_argument("--agent", choices=["human", "bfs"], required=True)
     args = parser.parse_args()
 
     remote = RemoteEngine(args.url)
     try:
-        remote.claim_player(args.player)
+        player = remote.claim_player(args.player)
     except SeatTakenError as e:
-        print(f"Could not connect as player {args.player}: {e}")
+        requested = args.player if args.player is not None else "(auto-assign)"
+        print(f"Could not connect as player {requested}: {e}")
         sys.exit(1)
 
-    agent = _build_agent(args.player, args.agent)
+    agent = _build_agent(player, args.agent)
 
-    print(f"Connected to {args.url} as player {args.player} ({args.agent}).")
+    print(f"Connected to {args.url} as player {player} ({args.agent}).")
 
     while remote.winner() is None:
-        if remote.current_player != args.player:
+        if remote.current_player != player:
             time.sleep(POLL_INTERVAL)
             continue
         try:

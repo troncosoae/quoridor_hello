@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Protocol
 
 from quoridor import pathfinding
-from quoridor.board import BoardState, QuoridorBoard
+from quoridor.board import BoardState, QuoridorBoard, goal_cells
 from quoridor.timeouts import run_with_timeout
 
 
@@ -61,7 +61,7 @@ class EngineLike(Protocol):
 
 class QuoridorEngine:
     # Only wall placement runs open-ended search (a connected-components scan
-    # to check neither player gets fully boxed in); plain moves are O(1) and
+    # to check no player gets fully boxed in); plain moves are O(1) and
     # don't need a budget. Defensive — see TimeoutExceededError's docstring.
     WALL_CHECK_TIMEOUT_SECONDS = 3.0
 
@@ -72,11 +72,18 @@ class QuoridorEngine:
     def get_state(self) -> BoardState:
         return self.board.get_state()
 
-    def _pawn_pos(self, player: int) -> list[int]:
-        return self.board.p1_pos if player == 1 else self.board.p2_pos
+    def _validate_player(self, player: int) -> None:
+        if not (1 <= player <= self.board.player_count):
+            raise ValueError(f"invalid player: {player}")
 
-    def _other_pawn_pos(self, player: int) -> list[int]:
-        return self.board.p2_pos if player == 1 else self.board.p1_pos
+    def _pawn_pos(self, player: int) -> list[int]:
+        return self.board.positions[player - 1]
+
+    def _is_occupied_by_other(self, row: int, col: int, excluding_player: int) -> bool:
+        for other in range(1, self.board.player_count + 1):
+            if other != excluding_player and self.board.positions[other - 1] == [row, col]:
+                return True
+        return False
 
     def _is_wall_between(self, row: int, col: int, new_row: int, new_col: int) -> bool:
         return pathfinding.is_wall_between(
@@ -84,6 +91,7 @@ class QuoridorEngine:
         )
 
     def is_valid_move(self, player: int, direction: Direction) -> bool:
+        self._validate_player(player)
         row, col = self._pawn_pos(player)
         d_row, d_col = _DIRECTION_DELTAS[direction]
         new_row, new_col = row + d_row, col + d_col
@@ -94,7 +102,7 @@ class QuoridorEngine:
         if self._is_wall_between(row, col, new_row, new_col):
             return False
 
-        if [new_row, new_col] == self._other_pawn_pos(player):
+        if self._is_occupied_by_other(new_row, new_col, player):
             return False
 
         return True
@@ -111,32 +119,28 @@ class QuoridorEngine:
         pawn[0] += d_row
         pawn[1] += d_col
 
-        self.current_player = 2 if player == 1 else 1
+        self.current_player = player % self.board.player_count + 1
 
     def _walls_left(self, player: int) -> int:
-        return self.board.p1_walls_left if player == 1 else self.board.p2_walls_left
+        return self.board.walls_left[player - 1]
 
     def _decrement_walls_left(self, player: int) -> None:
-        if player == 1:
-            self.board.p1_walls_left -= 1
-        else:
-            self.board.p2_walls_left -= 1
+        self.board.walls_left[player - 1] -= 1
 
     def _wall_set(self, orientation: WallOrientation) -> set[tuple[int, int]]:
         if orientation == WallOrientation.HORIZONTAL:
             return self.board.h_walls
         return self.board.v_walls
 
-    def _walls_still_allow_both_players_a_path(self) -> bool:
+    def _walls_still_allow_every_player_a_path(self) -> bool:
         def check() -> bool:
             components = pathfinding.connected_components(
                 self.board.h_walls, self.board.v_walls, self.board.size
             )
-            for player in (1, 2):
+            for player in range(1, self.board.player_count + 1):
                 row, col = self._pawn_pos(player)
-                goal_row = self.board.size - 1 if player == 1 else 0
                 region = pathfinding.region_containing(components, (row, col))
-                if not any(r == goal_row for r, _ in region):
+                if region.isdisjoint(goal_cells(player, self.board.size)):
                     return False
             return True
 
@@ -145,6 +149,7 @@ class QuoridorEngine:
     def is_valid_wall_placement(
         self, player: int, orientation: WallOrientation, row: int, col: int
     ) -> bool:
+        self._validate_player(player)
         if self._walls_left(player) <= 0:
             return False
 
@@ -165,7 +170,7 @@ class QuoridorEngine:
         wall_set = self._wall_set(orientation)
         wall_set.add((row, col))
         try:
-            return self._walls_still_allow_both_players_a_path()
+            return self._walls_still_allow_every_player_a_path()
         finally:
             # Guaranteed even if the check above times out — a tentative
             # wall must never survive past this method either way.
@@ -184,15 +189,14 @@ class QuoridorEngine:
 
         self._wall_set(orientation).add((row, col))
         self._decrement_walls_left(player)
-        self.current_player = 2 if player == 1 else 1
+        self.current_player = player % self.board.player_count + 1
 
     def is_won(self, player: int) -> bool:
-        row, _ = self._pawn_pos(player)
-        return row == self.board.size - 1 if player == 1 else row == 0
+        row, col = self._pawn_pos(player)
+        return (row, col) in goal_cells(player, self.board.size)
 
     def winner(self) -> int | None:
-        if self.is_won(1):
-            return 1
-        if self.is_won(2):
-            return 2
+        for player in range(1, self.board.player_count + 1):
+            if self.is_won(player):
+                return player
         return None

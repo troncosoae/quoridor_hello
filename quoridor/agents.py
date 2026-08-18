@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 from quoridor import pathfinding
 from quoridor.actions import Action, MoveAction, WallAction
+from quoridor.board import goal_cells
 from quoridor.engine import Direction, EngineLike, WallOrientation
 from quoridor.rendering import Renderer
 from quoridor.timeouts import run_with_timeout
@@ -101,12 +102,12 @@ class BFSAgent(Agent):
 
         def decide() -> Action:
             state = engine.get_state()
-            own_pos = state["p1_pos"] if self.player == 1 else state["p2_pos"]
-            goal_row = state["size"] - 1 if self.player == 1 else 0
+            own_pos = state["positions"][self.player - 1]
+            goal = goal_cells(self.player, state["size"])
 
             path = pathfinding.bfs_shortest_path(
                 set(state["h_walls"]), set(state["v_walls"]), state["size"],
-                (own_pos[0], own_pos[1]), goal_row,
+                (own_pos[0], own_pos[1]), goal,
             )
 
             preferred: Direction | None = None

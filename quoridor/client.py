@@ -62,19 +62,22 @@ class RemoteEngine:
             raise InvalidMoveError(body.get("error", "invalid move")) from None
         return body
 
-    def claim_player(self, player: int) -> None:
-        """Register this connection as the one controlling `player`.
+    def claim_player(self, player: int | None = None) -> int:
+        """Register this connection as the one controlling a player.
 
-        Must be called before acting for that player. Raises SeatTakenError
-        if the server already has another connection claiming the same
-        player number — this is what stops two clients from both playing
-        as player 1.
+        Pass an explicit `player` to claim that specific seat, or omit it
+        to have the server auto-assign the next open seat in connection
+        order. Returns the assigned player number either way. Raises
+        SeatTakenError if the requested seat is already taken, or (when
+        auto-assigning) if every seat is already claimed.
         """
-        status, body = self._request("/claim", {"player": player})
+        payload: dict[str, Any] = {"player": player} if player is not None else {}
+        status, body = self._request("/claim", payload)
         if status == 409:
             raise SeatTakenError(
                 body.get("error", f"player {player} is already connected")
             ) from None
+        return int(body["player"])
 
     def _refresh(self) -> BoardState:
         data = self._get("/state")

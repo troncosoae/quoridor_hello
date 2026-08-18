@@ -36,9 +36,13 @@ class TestIsWallBetween:
         assert is_wall_between({(0, 0)}, {(0, 0)}, 2, 2, 2, 3) is False
 
 
+def _row_goal(row, size=5):
+    return frozenset((row, c) for c in range(size))
+
+
 class TestBfsShortestPath:
     def test_finds_direct_path_on_empty_board(self):
-        path = bfs_shortest_path(set(), set(), 5, (0, 2), 4)
+        path = bfs_shortest_path(set(), set(), 5, (0, 2), _row_goal(4))
         assert path is not None
         assert path[0] == (0, 2)
         assert path[-1][0] == 4
@@ -51,20 +55,26 @@ class TestBfsShortestPath:
         # pathfinding layer this time).
         h_walls = {(0, 0)}
         v_walls = {(0, 0)}
-        path = bfs_shortest_path(h_walls, v_walls, 5, (0, 0), 4)
+        path = bfs_shortest_path(h_walls, v_walls, 5, (0, 0), _row_goal(4))
         assert path is None
 
     def test_path_routes_around_a_wall(self):
         # Wall spans cols 0-1 directly below row 0; a pawn at (0, 0) can
         # still reach row 4 by going right first.
         h_walls = {(0, 0)}
-        path = bfs_shortest_path(h_walls, set(), 5, (0, 0), 4)
+        path = bfs_shortest_path(h_walls, set(), 5, (0, 0), _row_goal(4))
         assert path is not None
         assert path[-1][0] == 4
 
     def test_start_already_on_goal_row(self):
-        path = bfs_shortest_path(set(), set(), 5, (4, 2), 4)
+        path = bfs_shortest_path(set(), set(), 5, (4, 2), _row_goal(4))
         assert path == [(4, 2)]
+
+    def test_goal_can_be_a_column_not_just_a_row(self):
+        column_goal = frozenset((r, 4) for r in range(5))
+        path = bfs_shortest_path(set(), set(), 5, (2, 0), column_goal)
+        assert path is not None
+        assert path[-1][1] == 4
 
 
 class TestConnectedComponents:

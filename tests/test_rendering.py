@@ -46,3 +46,11 @@ class TestCLIRenderer:
         output = CLIRenderer().render(board.get_state())
         # header + (2*size - 1) grid rows + wall-count line
         assert len(output.splitlines()) == 1 + (2 * 5 - 1) + 1
+
+    def test_render_shows_all_four_players(self):
+        board = QuoridorBoard(5, player_count=4)
+        output = CLIRenderer().render(board.get_state())
+        for marker in ("1", "2", "3", "4"):
+            assert marker in output
+        for i in range(1, 5):
+            assert f"P{i} walls left: 1" in output

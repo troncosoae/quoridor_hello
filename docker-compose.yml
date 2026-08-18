@@ -5,7 +5,10 @@ services:
       dockerfile: docker/server.Dockerfile
     ports:
       - "8765:8765"
+    command: ["--players", "4"]
 
+  # Seats now auto-assign in connection order, so none of the clients below
+  # pass --player — whoever connects first becomes seat 1, and so on.
   cli-client:
     build:
       context: .
@@ -14,12 +17,28 @@ services:
       - server
     stdin_open: true
     tty: true
-    command: ["--url", "http://server:8765", "--player", "1", "--agent", "human"]
+    command: ["--url", "http://server:8765", "--agent", "human"]
 
-  ai-client:
+  ai-client-1:
     build:
       context: .
       dockerfile: docker/client.Dockerfile
     depends_on:
       - server
-    command: ["--url", "http://server:8765", "--player", "2", "--agent", "bfs"]
+    command: ["--url", "http://server:8765", "--agent", "bfs"]
+
+  ai-client-2:
+    build:
+      context: .
+      dockerfile: docker/client.Dockerfile
+    depends_on:
+      - server
+    command: ["--url", "http://server:8765", "--agent", "bfs"]
+
+  ai-client-3:
+    build:
+      context: .
+      dockerfile: docker/client.Dockerfile
+    depends_on:
+      - server
+    command: ["--url", "http://server:8765", "--agent", "bfs"]

@@ -28,6 +28,16 @@ class TestRemoteGameplay:
         with pytest.raises(InvalidMoveError):
             remote.move(2, Direction.UP)  # it's player 1's turn first
 
+    def test_bfs_four_way_full_game_over_http(self, live_server_4p):
+        base_url, _ = live_server_4p
+        remote = RemoteEngine(base_url)
+
+        agents: dict[int, Agent] = {p: BFSAgent(p) for p in (1, 2, 3, 4)}
+        winner = GameRunner(remote, agents).run()
+
+        assert winner in (1, 2, 3, 4)
+        assert remote.winner() == winner
+
 
 class TestSeatClaiming:
     def test_two_clients_cannot_both_claim_player_one(self, live_server):

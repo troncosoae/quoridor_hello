@@ -11,8 +11,8 @@ from quoridor.rendering import CLIRenderer
 from quoridor.timeouts import TimeoutExceededError
 
 
-def make_engine(size=5):
-    return QuoridorEngine(QuoridorBoard(size))
+def make_engine(size=5, player_count=2):
+    return QuoridorEngine(QuoridorBoard(size, player_count))
 
 
 class TestCLIAgentParser:
@@ -77,6 +77,18 @@ class TestBFSAgent:
         action = agent.choose_action(engine)
         assert action == MoveAction(Direction.UP)
 
+    def test_player_three_moves_toward_rightmost_column(self):
+        engine = make_engine(5, player_count=4)
+        agent = BFSAgent(3)
+        action = agent.choose_action(engine)
+        assert action == MoveAction(Direction.RIGHT)
+
+    def test_player_four_moves_toward_leftmost_column(self):
+        engine = make_engine(5, player_count=4)
+        agent = BFSAgent(4)
+        action = agent.choose_action(engine)
+        assert action == MoveAction(Direction.LEFT)
+
     def test_decision_timeout_raises(self, monkeypatch):
         def slow_bfs(h_walls, v_walls, size, start, goal_row):
             time.sleep(0.2)
@@ -93,7 +105,7 @@ class TestBFSAgent:
 
     def test_falls_back_when_preferred_step_is_onto_opponent(self):
         engine = make_engine(5)
-        engine.board.p2_pos = [1, 2]  # directly below p1's start — p1's preferred step
+        engine.board.positions[1] = [1, 2]  # directly below p1's start — p1's preferred step
 
         agent = BFSAgent(1)
         action = agent.choose_action(engine)

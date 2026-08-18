@@ -32,4 +32,4 @@ def test_game_runner_drives_scripted_game_to_completion():
     winner = GameRunner(engine, agents).run()
 
     assert winner == 1
-    assert engine.board.p1_pos == [4, 2]
+    assert engine.board.positions[0] == [4, 2]

@@ -29,10 +29,8 @@ class CLIRenderer(Renderer):
             for c in range(size):
                 grid[2 * r][2 * c] = "."
 
-        p1_row, p1_col = state["p1_pos"]
-        p2_row, p2_col = state["p2_pos"]
-        grid[2 * p1_row][2 * p1_col] = "1"
-        grid[2 * p2_row][2 * p2_col] = "2"
+        for i, (row, col) in enumerate(state["positions"], start=1):
+            grid[2 * row][2 * col] = str(i)
 
         for r, c in state["h_walls"]:
             grid[2 * r + 1][2 * c] = "-"
@@ -59,8 +57,7 @@ class CLIRenderer(Renderer):
             lines.append(label + row_str)
 
         lines.append(
-            f"P1 walls left: {state['p1_walls_left']}  "
-            f"P2 walls left: {state['p2_walls_left']}"
+            "  ".join(f"P{i} walls left: {w}" for i, w in enumerate(state["walls_left"], start=1))
         )
 
         return "\n".join(lines)

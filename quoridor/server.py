@@ -86,12 +86,26 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             try:
                 body = self._read_json_body()
                 if parsed.path == "/claim":
-                    player = int(body["player"])
-                    if player not in (1, 2):
-                        raise ValueError(f"invalid player: {player}")
-                    if player in self._server.claimed_players:
-                        self._send_json(409, {"error": f"player {player} is already connected"})
-                        return
+                    player_count = engine.board.player_count
+                    requested = body.get("player")
+                    if requested is not None:
+                        player = int(requested)
+                        if not (1 <= player <= player_count):
+                            raise ValueError(f"invalid player: {player}")
+                        if player in self._server.claimed_players:
+                            self._send_json(
+                                409, {"error": f"player {player} is already connected"}
+                            )
+                            return
+                    else:
+                        free = [
+                            p for p in range(1, player_count + 1)
+                            if p not in self._server.claimed_players
+                        ]
+                        if not free:
+                            self._send_json(409, {"error": "game is full"})
+                            return
+                        player = free[0]
                     self._server.claimed_players.add(player)
                     self._send_json(200, {"player": player})
                 elif parsed.path == "/move":
@@ -132,11 +146,15 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--size", type=int, default=9, choices=[5, 7, 9])
+    parser.add_argument("--players", type=int, default=2, choices=[2, 4])
     args = parser.parse_args()
 
-    engine = QuoridorEngine(QuoridorBoard(args.size))
+    engine = QuoridorEngine(QuoridorBoard(args.size, args.players))
     server = create_server(args.host, args.port, engine)
-    print(f"Quoridor server listening on {args.host}:{args.port} (board size {args.size})")
+    print(
+        f"Quoridor server listening on {args.host}:{args.port} "
+        f"(board size {args.size}, {args.players} players)"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

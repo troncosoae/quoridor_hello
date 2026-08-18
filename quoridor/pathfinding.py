@@ -27,7 +27,7 @@ def bfs_shortest_path(
     v_walls: set[tuple[int, int]],
     size: int,
     start: tuple[int, int],
-    goal_row: int,
+    goal_cells: frozenset[tuple[int, int]],
 ) -> list[tuple[int, int]] | None:
     visited = {start}
     came_from: dict[tuple[int, int], tuple[int, int]] = {}
@@ -35,7 +35,7 @@ def bfs_shortest_path(
 
     while queue:
         row, col = queue.popleft()
-        if row == goal_row:
+        if (row, col) in goal_cells:
             path = [(row, col)]
             while path[-1] != start:
                 path.append(came_from[path[-1]])
