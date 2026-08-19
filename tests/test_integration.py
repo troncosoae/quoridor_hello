@@ -2,7 +2,7 @@ import pytest
 
 from quoridor.agents import Agent, FourPlayerBFSAgent, TwoPlayerBFSAgent
 from quoridor.client import RemoteEngine, SeatTakenError
-from quoridor.engine import Direction, InvalidMoveError
+from quoridor.engine import Direction, InvalidMoveError, WallOrientation
 from quoridor.runner import GameRunner
 
 
@@ -37,6 +37,25 @@ class TestRemoteGameplay:
 
         assert winner in (1, 2, 3, 4)
         assert remote.winner() == winner
+
+    def test_wall_entries_round_trip_as_hashable_tuples_not_lists(self, live_server):
+        # Regression test: JSON has no tuple type, so h_walls/v_walls come
+        # back over the wire as lists of lists. RemoteEngine.get_state()
+        # must convert each entry back to a tuple — BoardState declares
+        # list[tuple[int, int]], and callers (e.g. TwoPlayerBFSAgent) build
+        # a set() out of these entries, which requires hashable elements.
+        # Only surfaces once a wall actually exists, which no test before
+        # this one ever exercised over a real remote connection.
+        base_url, _ = live_server
+        remote = RemoteEngine(base_url)
+        remote.place_wall(1, WallOrientation.HORIZONTAL, 0, 0)
+
+        state = remote.get_state()
+
+        assert state["h_walls"] == [(0, 0)]
+        assert isinstance(state["h_walls"][0], tuple)
+        set(state["h_walls"])  # must not raise TypeError: unhashable type: 'list'
+        set(state["v_walls"])
 
 
 class TestSeatClaiming:

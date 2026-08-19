@@ -3,10 +3,12 @@ import time
 import pytest
 
 from quoridor import pathfinding
-from quoridor.actions import MoveAction, WallAction
+from quoridor.actions import MoveAction, WallAction, apply_action
 from quoridor.agents import (
     CLIAgent,
     FourPlayerBFSAgent,
+    MCTSAgent,
+    ModelAgent,
     TwoPlayerBFSAgent,
     UnsupportedGameSettingError,
     _preferred_direction,
@@ -15,6 +17,7 @@ from quoridor.agents import (
 from quoridor.board import VALID_PLAYER_COUNTS, QuoridorBoard
 from quoridor.engine import Direction, QuoridorEngine, WallOrientation
 from quoridor.rendering import CLIRenderer
+from quoridor.rl.cnn_model import CNNModel
 from quoridor.timeouts import TimeoutExceededError
 
 
@@ -73,22 +76,25 @@ class TestCLIAgentChooseAction:
 
 class TestAgentSupportDeclarations:
     def test_cli_agent_supports_any_player_count(self):
-        assert CLIAgent.supports(2) is True
-        assert CLIAgent.supports(4) is True
+        agent = CLIAgent(1, CLIRenderer())
+        assert agent.supports(2, size=9) is True
+        assert agent.supports(4, size=9) is True
 
     def test_two_player_bfs_agent_supports_only_two(self):
-        assert TwoPlayerBFSAgent.supports(2) is True
-        assert TwoPlayerBFSAgent.supports(4) is False
+        agent = TwoPlayerBFSAgent(1)
+        assert agent.supports(2, size=9) is True
+        assert agent.supports(4, size=9) is False
 
     def test_four_player_bfs_agent_supports_only_four(self):
-        assert FourPlayerBFSAgent.supports(4) is True
-        assert FourPlayerBFSAgent.supports(2) is False
+        agent = FourPlayerBFSAgent(1)
+        assert agent.supports(4, size=9) is True
+        assert agent.supports(2, size=9) is False
 
     def test_ensure_supports_raises_for_unsupported_count(self):
         with pytest.raises(UnsupportedGameSettingError):
-            TwoPlayerBFSAgent.ensure_supports(4)
+            TwoPlayerBFSAgent(1).ensure_supports(4, size=9)
         with pytest.raises(UnsupportedGameSettingError):
-            FourPlayerBFSAgent.ensure_supports(2)
+            FourPlayerBFSAgent(1).ensure_supports(2, size=9)
 
     def test_choose_action_enforces_support_at_runtime(self):
         # Not just the static classmethod — actually using the agent against
@@ -113,15 +119,15 @@ class TestAgentSupportDeclarations:
 
 class TestBuildAgent:
     def test_human_kind_builds_cli_agent(self):
-        agent = build_agent(1, "human", player_count=4)
+        agent = build_agent(1, "human", player_count=4, size=9)
         assert isinstance(agent, CLIAgent)
 
     def test_bfs_kind_builds_two_player_agent_for_two_player_games(self):
-        agent = build_agent(1, "bfs", player_count=2)
+        agent = build_agent(1, "bfs", player_count=2, size=9)
         assert isinstance(agent, TwoPlayerBFSAgent)
 
     def test_bfs_kind_builds_four_player_agent_for_four_player_games(self):
-        agent = build_agent(1, "bfs", player_count=4)
+        agent = build_agent(1, "bfs", player_count=4, size=9)
         assert isinstance(agent, FourPlayerBFSAgent)
 
 
@@ -205,3 +211,80 @@ class TestFourPlayerBFSAgent:
         agent = FourPlayerBFSAgent(4)
         action = agent.choose_action(engine)
         assert action == MoveAction(Direction.LEFT)
+
+
+class TestModelAndMCTSAgentSupport:
+    def test_model_agent_mirrors_the_wrapped_model_s_support(self):
+        model = CNNModel(size=5, player_count=4)
+        agent = ModelAgent(1, model)
+        assert agent.supports(4, 5) is True
+        assert agent.supports(2, 5) is False
+        assert agent.supports(4, 9) is False
+
+    def test_mcts_agent_intersects_model_support_with_two_player_only(self):
+        model_2p = CNNModel(size=5, player_count=2)
+        assert MCTSAgent(1, model_2p).supports(2, 5) is True
+
+        # Even a model that WOULD support 4-player is still restricted by
+        # MCTS's own hard 2-player-only limitation.
+        model_4p = CNNModel(size=5, player_count=4)
+        agent_4p = MCTSAgent(1, model_4p)
+        assert agent_4p.supports(4, 5) is False
+        assert agent_4p.SUPPORTED_PLAYER_COUNTS == frozenset()
+
+    def test_error_message_distinguishes_empty_support_from_unrestricted(self):
+        # A genuinely-empty SUPPORTED_PLAYER_COUNTS (e.g. MCTSAgent wrapping
+        # a 4p-only model) must not be reported as "any" in the error —
+        # `if self.SUPPORTED_PLAYER_COUNTS` is truthy-false for an empty
+        # frozenset just like it is for None, so the message-building logic
+        # has to check `is None` explicitly, not truthiness.
+        model_4p = CNNModel(size=5, player_count=4)
+        agent = MCTSAgent(1, model_4p)
+        with pytest.raises(UnsupportedGameSettingError, match=r"supports players: \[\]"):
+            agent.ensure_supports(4, 5)
+
+    def test_model_agent_choose_action_enforces_support_at_runtime(self):
+        model = CNNModel(size=5, player_count=2)
+        agent = ModelAgent(1, model)
+        with pytest.raises(UnsupportedGameSettingError):
+            agent.choose_action(make_engine(9, player_count=2))
+
+    def test_mcts_agent_choose_action_enforces_support_at_runtime(self):
+        model = CNNModel(size=5, player_count=4)
+        agent = MCTSAgent(1, model)
+        with pytest.raises(UnsupportedGameSettingError):
+            agent.choose_action(make_engine(5, player_count=4))
+
+
+class TestModelAgentChoosesLegalActions:
+    def test_never_picks_an_illegal_action_across_several_states(self):
+        model = CNNModel(size=5, player_count=2)
+        engine = make_engine(5, player_count=2)
+        agents = {1: ModelAgent(1, model), 2: ModelAgent(2, model)}
+
+        for _ in range(5):
+            if engine.winner() is not None:
+                break
+            agent = agents[engine.current_player]
+            action = agent.choose_action(engine)
+            if isinstance(action, MoveAction):
+                assert engine.is_valid_move(engine.current_player, action.direction)
+            else:
+                assert engine.is_valid_wall_placement(
+                    engine.current_player, action.orientation, action.row, action.col
+                )
+            apply_action(engine, action)
+
+
+class TestBuildAgentModelKinds:
+    def test_cnn_kind_builds_model_agent(self):
+        agent = build_agent(1, "cnn", player_count=2, size=5)
+        assert isinstance(agent, ModelAgent)
+
+    def test_mcts_kind_builds_mcts_agent(self):
+        agent = build_agent(1, "mcts", player_count=2, size=5)
+        assert isinstance(agent, MCTSAgent)
+
+    def test_mcts_kind_for_four_player_raises(self):
+        with pytest.raises(UnsupportedGameSettingError):
+            build_agent(1, "mcts", player_count=4, size=5)

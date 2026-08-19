@@ -17,7 +17,7 @@ def main() -> None:
         "--player", type=int, choices=[1, 2, 3, 4], default=None,
         help="Seat to claim. Omit to auto-assign the next open seat.",
     )
-    parser.add_argument("--agent", choices=["human", "bfs"], required=True)
+    parser.add_argument("--agent", choices=["human", "bfs", "cnn", "mcts"], required=True)
     args = parser.parse_args()
 
     remote = RemoteEngine(args.url)
@@ -28,8 +28,8 @@ def main() -> None:
         print(f"Could not connect as player {requested}: {e}")
         sys.exit(1)
 
-    player_count = remote.get_state()["player_count"]
-    agent = build_agent(player, args.agent, player_count)
+    state = remote.get_state()
+    agent = build_agent(player, args.agent, state["player_count"], state["size"])
 
     print(f"Connected to {args.url} as player {player} ({args.agent}).")
 

@@ -83,7 +83,14 @@ class RemoteEngine:
         data = self._get("/state")
         self.current_player = data["current_player"]
         self._winner = data["winner"]
-        return dict(data["board"])  # type: ignore[return-value]
+        board = data["board"]
+        # JSON has no tuple type — h_walls/v_walls round-trip as lists of
+        # lists over the wire, but BoardState declares them as
+        # list[tuple[int, int]] (callers like TwoPlayerBFSAgent build a
+        # set(...) out of them, which requires hashable tuple elements).
+        board["h_walls"] = [tuple(wall) for wall in board["h_walls"]]
+        board["v_walls"] = [tuple(wall) for wall in board["v_walls"]]
+        return dict(board)  # type: ignore[return-value]
 
     def get_state(self) -> BoardState:
         return self._refresh()

@@ -12,8 +12,9 @@ def main() -> None:
     parser.add_argument("--size", type=int, default=9, choices=[5, 7, 9])
     parser.add_argument("--players", type=int, default=2, choices=[2, 4])
     parser.add_argument(
-        "--agents", nargs="+", choices=["human", "bfs"], default=["human", "bfs"],
-        help="One human/bfs token per player, e.g. --agents human bfs bfs bfs",
+        "--agents", nargs="+", choices=["human", "bfs", "cnn", "mcts"],
+        default=["human", "bfs"],
+        help="One human/bfs/cnn/mcts token per player, e.g. --agents human bfs bfs bfs",
     )
     args = parser.parse_args()
 
@@ -22,7 +23,7 @@ def main() -> None:
 
     engine = QuoridorEngine(QuoridorBoard(args.size, args.players))
     agents = {
-        player: build_agent(player, kind, args.players)
+        player: build_agent(player, kind, args.players, args.size)
         for player, kind in enumerate(args.agents, start=1)
     }
 
