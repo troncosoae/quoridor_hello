@@ -19,19 +19,43 @@ quoridor/
   engine.py          Direction, WallOrientation, InvalidMoveError,
                        QuoridorEngine (the rules layer), and EngineLike — the
                        Protocol both QuoridorEngine and RemoteEngine satisfy.
-  actions.py          MoveAction / WallAction / Action, apply_action()
+  actions.py          MoveAction / WallAction / Action, apply_action(),
+                        legal_actions()
   agents.py            Agent (ABC) + CLIAgent (human, via terminal input) +
-                         BFSAgent (rule-based AI, shallow — always steps
-                         along the shortest unobstructed path to its goal
-                         row, never places walls)
+                         TwoPlayerBFSAgent / FourPlayerBFSAgent (rule-based
+                         AI, shallow — always steps along the shortest
+                         unobstructed path to its goal, never places walls)
+                         + ModelAgent (policy head only) + MCTSAgent (policy
+                         + value heads guiding a tree search)
   runner.py             GameRunner — cycles N Agents (2 or 4) against one
                           EngineLike until there's a winner
   server.py              stdlib http.server game server — owns one
                            QuoridorEngine, exposes it over HTTP
   client.py               RemoteEngine — EngineLike implementation that
                             talks to a running server (urllib + json only)
+  state_key.py             state_key() — canonical hash of a BoardState +
+                             whose turn it is, for anything keyed by "which
+                             position is this"
+  game_store.py             GameStore (ABC) + InMemoryGameStore /
+                              FileGameStore — where recorded games live
   play_local.py            entrypoint: two Agents vs one local engine
   play_remote.py            entrypoint: one Agent vs a remote server
+  rl/
+    model.py                 Model (ABC), ModelPrediction
+    cnn_model.py              CNNModel — Model backed by QuoridorNet
+    network.py                 QuoridorNet — the CNN itself (policy + value
+                                 heads)
+    encoding.py               BoardState <-> tensor conversions, action <->
+                                index mapping
+    mcts.py                   MCTS — Monte Carlo Tree Search guided by a
+                                Model's policy/value predictions
+    targets.py                derive_training_targets() — turns recorded
+                                games into value/policy training targets
+    trainer.py                TrainingConfig, Trainer — the self-play
+                                training loop
+    train.py                   CLI entrypoint for training
+    replay.py                  replay_game() — step through a stored
+                                 GameRecord move by move
 ```
 
 **The key idea:** `Agent`, `Renderer`, `GameRunner`, `play_local.py`, and
@@ -41,7 +65,113 @@ quoridor/
 interface, so exactly the same `Agent`/`GameRunner` code plays a local game
 or a networked one — `tests/test_integration.py` proves this by running the
 same `GameRunner` two ways: once against a local engine, once against a real
-running server.
+running server. The same pattern repeats twice more: `ModelAgent`/`MCTSAgent`
+are written against `Model`, not against `CNNModel` directly, so a future
+non-CNN model plugs in unchanged; and `GameRunner`'s optional recording is
+written against `GameStore`, not against any specific storage mechanism, so
+swapping `InMemoryGameStore`/`FileGameStore` for a future MongoDB-backed
+store touches nothing else.
+
+### Class diagram
+
+```mermaid
+classDiagram
+    class EngineLike {
+        <<interface>>
+        current_player
+        get_state()
+        is_valid_move()
+        move()
+        is_valid_wall_placement()
+        place_wall()
+        winner()
+    }
+    class QuoridorEngine
+    class RemoteEngine
+    EngineLike <|.. QuoridorEngine
+    EngineLike <|.. RemoteEngine
+
+    class Renderer {
+        <<abstract>>
+        render(state)*
+    }
+    class CLIRenderer
+    Renderer <|-- CLIRenderer
+
+    class Agent {
+        <<abstract>>
+        player
+        KIND
+        SUPPORTED_PLAYER_COUNTS
+        SUPPORTED_BOARD_SIZES
+        choose_action(engine)*
+    }
+    class CLIAgent
+    class TwoPlayerBFSAgent
+    class FourPlayerBFSAgent
+    class ModelAgent
+    class MCTSAgent
+    Agent <|-- CLIAgent
+    Agent <|-- TwoPlayerBFSAgent
+    Agent <|-- FourPlayerBFSAgent
+    Agent <|-- ModelAgent
+    Agent <|-- MCTSAgent
+
+    class Model {
+        <<interface>>
+        SUPPORTED_PLAYER_COUNTS
+        SUPPORTED_BOARD_SIZES
+        predict(engine, player, state)
+    }
+    class CNNModel
+    class QuoridorNet
+    Model <|.. CNNModel
+    CNNModel --> QuoridorNet : wraps
+
+    class GameStore {
+        <<interface>>
+        save_game(record)
+        get_game(game_id)
+        games_in_window(lookback, upto)
+    }
+    class InMemoryGameStore
+    class FileGameStore
+    GameStore <|.. InMemoryGameStore
+    GameStore <|.. FileGameStore
+
+    class GameRunner {
+        engine: EngineLike
+        agents: dict~int, Agent~
+        store: GameStore or None
+        run()
+    }
+    class MCTS {
+        model: Model
+        run(state, player)
+    }
+    class Trainer {
+        model: CNNModel
+        store: GameStore
+        config: TrainingConfig
+        run()
+    }
+
+    GameRunner --> EngineLike : drives
+    GameRunner --> Agent : one per seat
+    GameRunner --> GameStore : optional recording
+    ModelAgent --> Model : predict()
+    MCTSAgent --> MCTS : search
+    MCTS --> Model : predict()
+    Trainer --> CNNModel : warm-starts
+    Trainer --> GameStore : reads/writes
+    Trainer --> GameRunner : plays batches
+```
+
+`Agent`/`Model`/`Renderer`/`GameStore` are the four swappable-implementation
+boundaries in the codebase — everything downstream of each is written
+against the abstract type, never a concrete one, which is what lets a local
+game, a networked game, and self-play training all reuse the same
+`GameRunner`.
 
 ## Technical specifications
 
@@ -136,16 +266,75 @@ sequenceDiagram
   requested explicitly, and a taken (or, once full, nonexistent) seat is
   rejected either way.
 
+## Training the model
+
+`ModelAgent`/`MCTSAgent` are backed by `CNNModel` — a CNN (`QuoridorNet`)
+with a policy head (one weight per possible action) and a value head (one
+win-probability per player). Freshly constructed, that network has random
+weights; `quoridor.rl.trainer.Trainer` is the naive first training loop that
+actually trains it, currently scoped to 5×5, 2-player games (the training
+*logic* itself is written generically over `player_count` — only `CNNModel`'s
+layer sizes are tied to one board size/player count).
+
+The core idea is self-play plus classical Monte Carlo state-value
+estimation, with the policy target derived from those values by one-step
+lookahead rather than tracked separately:
+
+```mermaid
+flowchart TD
+    A["Play a batch of self-play games<br/>(model vs itself, model vs TwoPlayerBFSAgent)"] --> B["GameRunner records every ply<br/>into the GameStore, tagged with<br/>which agent (KIND) played it"]
+    B --> C["Pull the sliding window:<br/>the last N batches of games"]
+    C --> D["Pass 1 — Monte Carlo value:<br/>hash every visited state (state_key),<br/>tally how often each player<br/>went on to win from it"]
+    D --> E["Pass 2 — one-step lookahead policy:<br/>for each model-played action,<br/>weight it by the successor<br/>state's value for the mover"]
+    E --> F["Train step: soft cross-entropy loss<br/>on both heads against the derived<br/>value/policy targets (warm start —<br/>same network weights every batch)"]
+    F --> G["Checkpoint the network"]
+    G -->|next batch| A
+```
+
+A few choices worth calling out:
+
+- **Why derive the policy from values instead of tracking per-action win
+  rates directly**: state visits are far more common than any single
+  (state, action) pair, so bootstrapping the policy target off the
+  richer, better-sampled value estimates avoids fragmenting an already
+  sparse signal.
+- **Why only `"model"`-played actions feed the policy target**:
+  `TwoPlayerBFSAgent` never places walls, so folding its plies into the
+  policy target would teach "never place a wall here" purely because the
+  baseline doesn't know how to, not because it's actually bad. Every ply
+  (model or BFS) still counts toward the *value* target — a real win or
+  loss is meaningful regardless of who was playing.
+- **Exploration**: self-play uses temperature-based sampling
+  (`ModelAgent(..., temperature=...)`, `policy ** (1/temperature)`), not
+  epsilon-greedy — a tunable knob (`TrainingConfig.exploration_temperature`)
+  separate from the one that sharpens the policy *target* during
+  derivation (`policy_temperature`).
+- **Storage is decoupled from both game execution and training**:
+  `GameRunner` (the same runner `play_local.py`/`play_remote.py` use) can
+  optionally record into any `GameStore` — training self-play is just a
+  regular game with recording turned on, not a separate code path. The
+  store itself is swappable (`InMemoryGameStore`/`FileGameStore` today, a
+  MongoDB-backed one later) without touching `GameRunner` or `Trainer`.
+- **Batch size, lookback window, and number of batches are all
+  `TrainingConfig` fields** — meant to scale from a couple of test games up
+  toward the ~1M-game range without any code changes.
+
 ## Not implemented yet
 
 - Diagonal moves / jumping over an adjacent opponent pawn.
 - A real GUI (`CLIRenderer` is the only `Renderer` so far — the `Renderer`
   base class exists specifically so a GUI can be added as a second
   implementation without touching `Agent`/`GameRunner`/the engine).
-- A stronger AI (`BFSAgent` is deliberately shallow — one BFS toward its own
-  goal, no wall strategy, no lookahead, no opponent modeling). A future
-  version estimating win probability per position (and pruning search with
-  that estimate) is a natural next step.
+- MCTS-guided self-play during training (`Trainer` currently generates data
+  via plain `ModelAgent`/`TwoPlayerBFSAgent` play, not `MCTSAgent` — MCTS is
+  wired up and usable for actual play, just not yet used to *generate*
+  training data, mainly for self-play speed).
+- Training at real scale (only ever run with a handful of games so far;
+  1k-plus-game batches, many batches, and evaluating whether the model
+  actually improves over a longer run are all still open).
+- 4-player / larger-board training (the training logic is written
+  generically over `player_count`, but `CNNModel`'s dimensions are fixed
+  per instance, so a 4-player or 9×9 model would need its own training run).
 
 ## Requirements
 
@@ -259,7 +448,18 @@ strict mode checks.
   via a monkeypatched `input()`), and `GameRunner`.
 - `test_server.py` — every HTTP route against a real `ThreadingHTTPServer`
   spun up on an ephemeral port per test.
-- `test_integration.py` — full `BFSAgent`-only games (both 2-player and
+- `test_integration.py` — full BFS-agent-only games (both 2-player and
   4-player) driven through `GameRunner` + `RemoteEngine` against a real
   running server, plus direct checks that a `409` response becomes a local
   `InvalidMoveError`/`SeatTakenError` as appropriate.
+- `test_rl_encoding.py`, `test_rl_model.py`, `test_rl_mcts.py` — state/action
+  <-> tensor conversions, `CNNModel`'s `Model` contract, and MCTS search.
+- `test_state_key.py`, `test_game_store.py` — hashing is order-independent
+  and sensitive to whose turn it is; both `GameStore` backends round-trip a
+  `GameRecord` and filter correctly by lookback window.
+- `test_rl_targets.py` — Monte Carlo value + one-step-lookahead policy
+  derivation: a normal two-ply win, the terminal-move edge case, the
+  zero-sum-weights fallback, and that winnerless (cutoff) games are excluded.
+- `test_rl_trainer.py` — a full tiny training run end to end (self-play,
+  target derivation, a training step) against both store backends, asserting
+  it completes with a finite loss.

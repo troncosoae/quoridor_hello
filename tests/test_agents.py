@@ -3,7 +3,7 @@ import time
 import pytest
 
 from quoridor import pathfinding
-from quoridor.actions import MoveAction, WallAction, apply_action
+from quoridor.actions import Action, MoveAction, WallAction, apply_action
 from quoridor.agents import (
     CLIAgent,
     FourPlayerBFSAgent,
@@ -12,6 +12,7 @@ from quoridor.agents import (
     TwoPlayerBFSAgent,
     UnsupportedGameSettingError,
     _preferred_direction,
+    _sample_action,
     build_agent,
 )
 from quoridor.board import VALID_PLAYER_COUNTS, QuoridorBoard
@@ -274,6 +275,40 @@ class TestModelAgentChoosesLegalActions:
                     engine.current_player, action.orientation, action.row, action.col
                 )
             apply_action(engine, action)
+
+
+class TestSampleAction:
+    def test_temperature_zero_is_deterministic_argmax(self):
+        policy: dict[Action, float] = {
+            MoveAction(Direction.UP): 0.2, MoveAction(Direction.DOWN): 0.7,
+            MoveAction(Direction.LEFT): 0.1,
+        }
+        for _ in range(10):
+            assert _sample_action(policy, 0.0) == MoveAction(Direction.DOWN)
+
+    def test_temperature_above_zero_only_returns_policy_actions(self):
+        policy: dict[Action, float] = {
+            MoveAction(Direction.UP): 0.5, MoveAction(Direction.DOWN): 0.5,
+        }
+        for _ in range(20):
+            assert _sample_action(policy, 1.0) in policy
+
+    def test_zero_weight_policy_falls_back_to_random_choice(self):
+        policy: dict[Action, float] = {
+            MoveAction(Direction.UP): 0.0, MoveAction(Direction.DOWN): 0.0,
+        }
+        assert _sample_action(policy, 1.0) in policy
+
+
+class TestModelAgentTemperature:
+    def test_default_temperature_matches_pre_temperature_argmax_behavior(self):
+        model = CNNModel(size=5, player_count=2)
+        engine = make_engine(5)
+
+        first = ModelAgent(1, model).choose_action(engine)
+        second = ModelAgent(1, model).choose_action(engine)
+
+        assert first == second
 
 
 class TestBuildAgentModelKinds:

@@ -79,11 +79,17 @@ class QuoridorBoard:
         self.walls_left: list[int] = [size_to_walls(size, player_count)] * player_count
 
     def to_dict(self) -> BoardState:
+        # Every field here must be a fresh copy, not a reference into this
+        # board's own mutable state — any caller that keeps a BoardState
+        # around past a later move/wall placement (e.g. recorded game
+        # history) would otherwise see it silently mutate out from under
+        # them, since self.positions/self.walls_left are the exact same
+        # list objects the engine keeps mutating in place.
         return {
             "size": self.size,
             "player_count": self.player_count,
-            "positions": self.positions,
-            "walls_left": self.walls_left,
+            "positions": [list(pos) for pos in self.positions],
+            "walls_left": list(self.walls_left),
             "h_walls": list(self.h_walls),
             "v_walls": list(self.v_walls),
         }

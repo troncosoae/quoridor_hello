@@ -56,6 +56,21 @@ class TestQuoridorBoard:
 
         assert data["positions"][0][0] != 99
 
+    def test_to_dict_does_not_alias_the_board_s_own_mutable_state(self):
+        # Regression: to_dict() used to hand back board.positions/
+        # board.walls_left directly (not h_walls/v_walls, which were
+        # already list()-copied) — any caller holding onto a BoardState
+        # across a later move/wall placement (e.g. recorded game history)
+        # would see it silently rewrite itself as the board kept mutating.
+        board = QuoridorBoard(5)
+        data = board.to_dict()
+
+        board.positions[0][0] = 99
+        board.walls_left[0] = 0
+
+        assert data["positions"][0][0] != 99
+        assert data["walls_left"][0] != 0
+
 
 class TestStartPosition:
     @pytest.mark.parametrize(

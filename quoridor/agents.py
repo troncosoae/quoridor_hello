@@ -1,3 +1,4 @@
+import random
 from abc import ABC, abstractmethod
 
 from quoridor import pathfinding
@@ -50,6 +51,11 @@ class Agent(ABC):
     SUPPORTED_PLAYER_COUNTS: frozenset[int] | None = None  # None = supports any
     SUPPORTED_BOARD_SIZES: frozenset[int] | None = None  # None = supports any
     DECISION_TIMEOUT_SECONDS: float = 2.0
+    KIND: str = "agent"
+    """Identifies which kind of agent made a move, for anything that
+    records games (GameRunner's optional recording, quoridor.game_store) —
+    e.g. quoridor.rl.targets distinguishes "model" plies from "bfs" plies
+    when deriving policy targets."""
 
     def __init__(self, player: int, renderer: Renderer | None = None):
         self.player = player
@@ -88,6 +94,7 @@ class CLIAgent(Agent):
 
     SUPPORTED_PLAYER_COUNTS = None
     SUPPORTED_BOARD_SIZES = None
+    KIND = "human"
 
     def __init__(self, player: int, renderer: Renderer):
         super().__init__(player, renderer)
@@ -202,6 +209,7 @@ class TwoPlayerBFSAgent(Agent):
 
     SUPPORTED_PLAYER_COUNTS = frozenset({2})
     DECISION_TIMEOUT_SECONDS = 2.0
+    KIND = "bfs"
 
     def choose_action(self, engine: EngineLike) -> Action:
         return _shortest_path_choose_action(self, engine)
@@ -214,20 +222,48 @@ class FourPlayerBFSAgent(Agent):
 
     SUPPORTED_PLAYER_COUNTS = frozenset({4})
     DECISION_TIMEOUT_SECONDS = 2.0
+    KIND = "bfs"
 
     def choose_action(self, engine: EngineLike) -> Action:
         return _shortest_path_choose_action(self, engine)
 
 
+def _sample_action(policy: dict[Action, float], temperature: float) -> Action:
+    """temperature=0.0 is deterministic argmax — a special-cased branch,
+    not the limit of the formula below (1/0.0 raises ZeroDivisionError in
+    Python, it isn't naturally continuous into the deterministic case).
+    temperature>0.0 samples from policy ** (1/temperature), the standard
+    AlphaZero-style exploration knob — the network already outputs a full
+    distribution, so this is a more natural fit than epsilon-greedy."""
+    if temperature == 0.0:
+        return max(policy.items(), key=lambda item: item[1])[0]
+
+    actions = list(policy.keys())
+    weights = [w ** (1.0 / temperature) for w in policy.values()]
+    total = sum(weights)
+    if total <= 0.0:
+        return random.choice(actions)
+    return random.choices(actions, weights=weights, k=1)[0]
+
+
 class ModelAgent(Agent):
-    """Naive Model-backed agent: no search, just the raw policy head's
-    argmax over legal actions. Decoupled from any specific model
+    """Model-backed agent: no search, just the policy head's action
+    choice over legal actions. Decoupled from any specific model
     implementation — works with any Model, generalizing to whatever
     (player_count, size) that model declares support for."""
 
-    def __init__(self, player: int, model: Model, renderer: Renderer | None = None):
+    KIND = "model"
+
+    def __init__(
+        self,
+        player: int,
+        model: Model,
+        temperature: float = 0.0,
+        renderer: Renderer | None = None,
+    ):
         super().__init__(player, renderer)
         self.model = model
+        self.temperature = temperature
         self.SUPPORTED_PLAYER_COUNTS = model.SUPPORTED_PLAYER_COUNTS
         self.SUPPORTED_BOARD_SIZES = model.SUPPORTED_BOARD_SIZES
 
@@ -240,7 +276,7 @@ class ModelAgent(Agent):
         prediction = self.model.predict(engine, self.player, state)
         if not prediction.policy:
             raise RuntimeError(f"No legal move for player {self.player}")
-        return max(prediction.policy.items(), key=lambda item: item[1])[0]
+        return _sample_action(prediction.policy, self.temperature)
 
 
 class MCTSAgent(Agent):
@@ -253,6 +289,7 @@ class MCTSAgent(Agent):
 
     MCTS_SUPPORTED_PLAYER_COUNTS = frozenset({2})
     DECISION_TIMEOUT_SECONDS = 15.0
+    KIND = "mcts"
 
     def __init__(
         self,
